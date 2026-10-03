@@ -18,7 +18,7 @@ public class RoomController {
     @Autowired
     private RoomService roomService;
     @GetMapping("/cinemas/{cinemaId}")
-    private ResponseEntity<?> getCinemas(@PathVariable Long cinemaId) {
+    public ResponseEntity<?> getCinemas(@PathVariable Long cinemaId) {
         try {
             List<RoomDTO> roomDTOs = roomService.getRoomsByCinemaId(cinemaId);
             return ResponseEntity.ok(roomDTOs);

@@ -52,15 +52,28 @@ public class CinemaController {
         return ResponseEntity.ok(schedule);
     }
     @GetMapping
-    public ResponseEntity<Page<CinemaSearchResponse>> getCinemaSearch(
+    public ResponseEntity<?> getCinemaSearch(
             @ModelAttribute CinemaSearchRequest cinemaSearchRequest,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(defaultValue = "id,asc") String[] sort){
-        Sort.Direction direction = Sort.Direction.fromString(sort[1]);
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction,sort[0]));
-        Page<CinemaSearchResponse> cinemaSearchResponses = cinemaService.findAll(cinemaSearchRequest, pageable);
-        return ResponseEntity.ok(cinemaSearchResponses);
+        try {
+            String sortField = "id";
+            Sort.Direction direction = Sort.Direction.ASC;
+            if (sort != null && sort.length > 0) {
+                String[] parts = sort[0].contains(",") ? sort[0].split(",") : sort;
+                if (parts.length > 0 && !parts[0].isBlank()) sortField = parts[0];
+                if (parts.length > 1 && !parts[1].isBlank()) {
+                    direction = Sort.Direction.fromOptionalString(parts[1]).orElse(Sort.Direction.ASC);
+                }
+            }
+            Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortField));
+            Page<CinemaSearchResponse> cinemaSearchResponses = cinemaService.findAll(cinemaSearchRequest, pageable);
+            return ResponseEntity.ok(cinemaSearchResponses);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(500).body(Map.of("error", e.getClass().getName() + ": " + e.getMessage()));
+        }
     }
     @PostMapping
     public ResponseEntity<?> createCinema(

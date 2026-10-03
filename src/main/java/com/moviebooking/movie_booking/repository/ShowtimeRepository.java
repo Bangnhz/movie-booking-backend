@@ -21,7 +21,7 @@ public interface ShowtimeRepository extends JpaRepository<ShowtimeEntity,Long> {
             "JOIN FETCH m.showtimes s " +
             "WHERE s.room.cinema.id = :cinemaId " +
             "AND s.startTime >= :start " +
-            "ORDER BY m.title ASC, s.startTime ASC")
+            "ORDER BY m.title ASC")
     List<MovieEntity> findMoviesWithShowtimes(
             @Param("cinemaId") Long cinemaId,
             @Param("start") LocalDateTime start

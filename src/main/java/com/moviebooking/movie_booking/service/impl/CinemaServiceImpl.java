@@ -4,6 +4,7 @@ import com.moviebooking.movie_booking.converter.CinemaConverter;
 import com.moviebooking.movie_booking.converter.MovieConverter;
 import com.moviebooking.movie_booking.entity.CinemaEntity;
 import com.moviebooking.movie_booking.entity.MovieEntity;
+import com.moviebooking.movie_booking.entity.ShowtimeEntity;
 import com.moviebooking.movie_booking.model.dto.*;
 import com.moviebooking.movie_booking.model.request.save.CinemaSaveRequest;
 import com.moviebooking.movie_booking.model.request.search.CinemaSearchRequest;
@@ -72,7 +73,7 @@ public class CinemaServiceImpl implements CinemaService {
     @Override
     public CinemaDetailDTO getCinemaById(Long cinemaId) {
         CinemaEntity cinemaEntity = cinemaRepository.findById(cinemaId).orElseThrow(() -> new RuntimeException("Không tìm thấy rạp có id="+cinemaId));;
-        return modelMapper.map(cinemaEntity,CinemaDetailDTO.class);
+        return cinemaConverter.toCinemaDetailDTO(cinemaEntity);
     }
 
     @Override

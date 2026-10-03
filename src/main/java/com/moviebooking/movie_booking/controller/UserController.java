@@ -31,7 +31,7 @@ public class UserController {
     private UserRepository userRepository;
 
     @GetMapping
-    private ResponseEntity<Page<UserDTO>> getUsers(
+    public ResponseEntity<Page<UserDTO>> getUsers(
             @ModelAttribute UserSearchRequest userSearchRequest,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
@@ -43,7 +43,7 @@ public class UserController {
         return ResponseEntity.ok(userDTOPage);
     }
     @GetMapping("/{userId}/bookings")
-    private ResponseEntity<?> getBookingsByUserId(
+    public ResponseEntity<?> getBookingsByUserId(
             @PathVariable Long  userId,
             @ModelAttribute BookingSearchRequest bookingSearchRequest,
             @RequestParam(defaultValue = "0") int page,
@@ -56,7 +56,7 @@ public class UserController {
         return ResponseEntity.ok(bookingSearchResponses);
     }
     @DeleteMapping("/{userId}")
-    private ResponseEntity<?> deleteUser(@PathVariable Long userId) {
+    public ResponseEntity<?> deleteUser(@PathVariable Long userId) {
         try {
             userService.delete(userId);
             return ResponseEntity.noContent().build();
@@ -66,7 +66,7 @@ public class UserController {
         }
     }
     @PutMapping
-    private ResponseEntity<?> updateUser(@RequestBody UserDTO userDTO) {
+    public ResponseEntity<?> updateUser(@RequestBody UserDTO userDTO) {
         try {
             userService.delete(userDTO.getId());
             return ResponseEntity.ok(userDTO);

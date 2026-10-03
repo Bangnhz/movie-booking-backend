@@ -47,11 +47,16 @@ public class MovieController {
             @RequestParam(defaultValue = "10") int size,   // Số lượng bản ghi mỗi trang
             @RequestParam(defaultValue = "id,desc") String[] sort // Sắp xếp (ví dụ: id giảm dần)
     ) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(sort[0]).descending());
-
-        if (sort[1].equalsIgnoreCase("asc")) {
-            pageable = PageRequest.of(page, size, Sort.by(sort[0]).ascending());
+        String sortField = "id";
+        Sort.Direction direction = Sort.Direction.DESC;
+        if (sort != null && sort.length > 0) {
+            String[] parts = sort[0].contains(",") ? sort[0].split(",") : sort;
+            if (parts.length > 0 && !parts[0].isBlank()) sortField = parts[0];
+            if (parts.length > 1 && !parts[1].isBlank()) {
+                direction = Sort.Direction.fromOptionalString(parts[1]).orElse(Sort.Direction.DESC);
+            }
         }
+        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortField));
 
         Page<MovieCardDTO> result = movieService.findAll(pageable);
         return ResponseEntity.ok(result);

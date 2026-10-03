@@ -29,11 +29,29 @@ public class MovieConverter {
         return movieCardDTO;
     }
     public MovieDetailDTO toMovieDetailDTO(MovieEntity movieEntity) {
-        MovieDetailDTO movieDetailDTO = modelMapper.map(movieEntity, MovieDetailDTO.class);
-        List<GenreEntity> genresByMovie = movieEntity.getMovieGenres().stream()
-                .map(movieGenre -> movieGenre.getGenre()).toList();
-        List<GenreDTO> genreDTOsByMovie = genresByMovie.stream().map(genre -> modelMapper.map(genre, GenreDTO.class)).toList();
-        movieDetailDTO.setGenres(genreDTOsByMovie);
+        if (movieEntity == null) return null;
+        MovieDetailDTO movieDetailDTO = new MovieDetailDTO();
+        movieDetailDTO.setId(movieEntity.getId());
+        movieDetailDTO.setTitle(movieEntity.getTitle());
+        movieDetailDTO.setDescription(movieEntity.getDescription());
+        movieDetailDTO.setPosterUrl(movieEntity.getPosterUrl());
+        movieDetailDTO.setReleaseDate(movieEntity.getReleaseDate());
+        movieDetailDTO.setDuration(movieEntity.getDuration());
+        if (movieEntity.getAgeRating() != null) {
+            movieDetailDTO.setAgeRating(movieEntity.getAgeRating().name());
+        }
+        List<GenreDTO> genreDTOs = new ArrayList<>();
+        if (movieEntity.getMovieGenres() != null) {
+            for (MovieGenreEntity mg : movieEntity.getMovieGenres()) {
+                if (mg != null && mg.getGenre() != null) {
+                    GenreDTO gDto = new GenreDTO();
+                    gDto.setId(mg.getGenre().getId());
+                    gDto.setName(mg.getGenre().getName());
+                    genreDTOs.add(gDto);
+                }
+            }
+        }
+        movieDetailDTO.setGenres(genreDTOs);
         return movieDetailDTO;
     }
     public MovieBookingDTO toMovieBookingDTO(MovieEntity movieEntity) {

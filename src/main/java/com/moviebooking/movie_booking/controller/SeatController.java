@@ -19,7 +19,7 @@ public class SeatController {
     private SeatService seatService;
 
     @GetMapping("/rooms/{roomId}")
-    private ResponseEntity<?> getSeatsByRoom(@PathVariable Long roomId){
+    public ResponseEntity<?> getSeatsByRoom(@PathVariable Long roomId){
         try{
             List<RoomSeatDTO> seats = seatService.getSeatsByRoomId(roomId);
             return ResponseEntity.ok(seats);
