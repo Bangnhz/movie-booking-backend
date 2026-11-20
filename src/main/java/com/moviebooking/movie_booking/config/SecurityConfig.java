@@ -43,7 +43,7 @@ public class SecurityConfig {
 //                        .requestMatchers("/**").permitAll()
 //                        .requestMatchers("/bookings/**","/payments/**").authenticated()// Các API công khai
 //                        .anyRequest().authenticated() // Còn lại phải đăng nhập
-                            .requestMatchers("/bookings/**","/payments/**","/tickets/**").authenticated()
+                            .requestMatchers("/bookings/**", "/api/bookings/**", "/api/payment/vnpay/create", "/payments/**", "/tickets/**").authenticated()
                             .anyRequest().permitAll()
                 )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class); // 👈 GẮN Ở ĐÂY;

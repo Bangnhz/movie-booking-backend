@@ -5,7 +5,7 @@ import com.moviebooking.movie_booking.converter.SeatConverter;
 import com.moviebooking.movie_booking.entity.*;
 import com.moviebooking.movie_booking.enums.BookingStatus;
 import com.moviebooking.movie_booking.enums.SeatStatus;
-import com.moviebooking.movie_booking.model.dto.MovieBookingDTO;
+import com.moviebooking.movie_booking.model.TempBookingRequest;
 import com.moviebooking.movie_booking.model.dto.ShowtimeSeatDTO;
 import com.moviebooking.movie_booking.model.request.BookingRequest;
 import com.moviebooking.movie_booking.model.request.search.BookingSearchRequest;
@@ -14,13 +14,19 @@ import com.moviebooking.movie_booking.model.response.BookingSearchResponse;
 import com.moviebooking.movie_booking.repository.*;
 import com.moviebooking.movie_booking.service.BookingService;
 import com.moviebooking.movie_booking.service.RedisService;
-import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+
+import com.moviebooking.movie_booking.enums.PaymentStatus;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -43,167 +49,220 @@ public class BookingServiceImpl implements BookingService {
     @Autowired
     private SeatStatusRepository seatStatusRepository;
     @Autowired
-    private MovieRepository movieRepository;
-    @Autowired
     private SeatConverter seatConverter;
     @Autowired
     private MovieConverter movieConverter;
     @Autowired
-    private ModelMapper modelMapper;
-    @Autowired
     private RedisService redisService;
+    @Autowired
+    private PaymentRepository paymentRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    private static final int HOLD_MINUTES = 15;
 
     @Override
     @Transactional
-    public Long create(BookingRequest bookingRequest) {
-//        List<BookingEntity> oldPendingBookings = bookingRepository.findAllByUserIdAndShowtimeIdAndStatus(bookingRequest.getUserId(),bookingRequest.getShowtimeId(), BookingStatus.PENDING);
+    public Long create(BookingRequest request, String username) {
+        validateRequest(request);
+        ShowtimeEntity showtime = getShowtime(request.getShowtimeId());
+        UserEntity user = getUserByUsername(username);
+        List<SeatEntity> seats = validateSeats(request, showtime);
+        if (!redisService.reserveSeats(showtime.getId(), request.getSeatIds(), user.getId(), HOLD_MINUTES)) {
+            throw new IllegalStateException("Ghế đang được người khác giữ!");
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status == STATUS_ROLLED_BACK) {
+                        redisService.releaseSeats(showtime.getId(), request.getSeatIds(), user.getId());
+                    }
+                }
+            });
+        }
 
-//        for(BookingEntity oldBooking : oldPendingBookings){
-//            for(TicketEntity oldTicket : oldBooking.getTickets()){
-//                SeatStatusEntity seatStatus = seatStatusRepository.findBySeatIdAndShowtimeId(oldTicket.getSeat().getId(), bookingRequest.getShowtimeId());
-//                seatStatus.setStatus(SeatStatus.AVAILABLE);
-//                seatStatus.setHoldExpiresAt(null);
-//                seatStatusRepository.save(seatStatus);
-//            }
-//            oldBooking.setStatus(BookingStatus.CANCELLED);
-//            bookingRepository.save(oldBooking);
-//        }
-//        bookingRepository.flush();
-
-        BookingEntity bookingEntity = new BookingEntity();
-        bookingEntity.setCreatedAt(LocalDateTime.now());
-        bookingEntity.setStatus(BookingStatus.PENDING);
-
-        ShowtimeEntity showtimeEntity = showtimeRepository.findById(bookingRequest.getShowtimeId())
-                        .orElseThrow(() -> new RuntimeException("Không tìm thấy showtime"));
-        bookingEntity.setShowtime(showtimeEntity);
-
-        UserEntity userEntity = userRepository.findById(bookingRequest.getUserId())
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy user"));
-        bookingEntity.setUser(userEntity);
-
-        BigDecimal totalPrice = BigDecimal.ZERO;
-        BigDecimal basePrice = showtimeEntity.getBasePrice();
-
+        BookingEntity booking = new BookingEntity();
+        booking.setUser(user);
+        booking.setShowtime(showtime);
+        booking.setCreatedAt(LocalDateTime.now());
+        booking.setStatus(BookingStatus.PENDING);
         List<TicketEntity> tickets = new ArrayList<>();
-        for(Long seatId : bookingRequest.getSeatIds()){
-            SeatEntity seatEntity = seatRepository.findById(seatId)
-                    .orElseThrow(() -> new RuntimeException("Không tìm thấy ghế"));
-            if(ticketRepository.existsByShowtimeIdAndSeatIdAndBooking_StatusIn(showtimeEntity.getId(), seatId, new BookingStatus[]{BookingStatus.PENDING})){
-                throw new RuntimeException("Ghế "+seatEntity.getRowIndex()+""+seatEntity.getColumnIndex()+" đã có người đặt");
+        BigDecimal total = BigDecimal.ZERO;
+        for (SeatEntity seat : seats) {
+            SeatStatusEntity status = seatStatusRepository.findBySeatIdAndShowtimeId(seat.getId(), showtime.getId());
+            if (status == null) {
+                status = new SeatStatusEntity();
+                status.setSeat(seat);
+                status.setShowtime(showtime);
             }
-            SeatStatusEntity seatStatus = seatStatusRepository.findBySeatIdAndShowtimeId(seatId, showtimeEntity.getId());
-            if(seatStatus == null){
-                seatStatus = new SeatStatusEntity();
-                seatStatus.setSeat(seatEntity);
-                seatStatus.setShowtime(showtimeEntity);
-                seatStatus.setStatus(SeatStatus.AVAILABLE);
-            }
-            if(seatStatus.getStatus() != SeatStatus.AVAILABLE){
-                throw new RuntimeException("Ghế "+seatEntity.getRowIndex()+""+seatEntity.getColumnIndex()+" đang được đặt");
-            }
-            seatStatus.setStatus(SeatStatus.HELD);
-            seatStatus.setHoldExpiresAt(LocalDateTime.now().plusMinutes(5));
-//            seatStatusRepository.save(seatStatus);
-            BigDecimal seatPrice =
-                    seatEntity.getSeatType().getSurcharge()
-                            .add(basePrice);
-            totalPrice = totalPrice.add(seatPrice);
+            status.setStatus(SeatStatus.HELD);
+            status.setHoldExpiresAt(booking.getCreatedAt().plusMinutes(HOLD_MINUTES));
+            seatStatusRepository.save(status);
 
-//            TicketEntity ticketEntity = new TicketEntity();
-//            ticketEntity.setSeat(seatEntity);
-//            ticketEntity.setShowtime(showtimeEntity);
-//            ticketEntity.setBooking(bookingEntity);
-//            ticketEntity.setOriginalPrice(seatPrice);
-//            ticketEntity.setFinalPrice(seatPrice);
-//            tickets.add(ticketEntity);
+            BigDecimal price = showtime.getBasePrice().add(seat.getSeatType().getSurcharge());
+            TicketEntity ticket = new TicketEntity();
+            ticket.setBooking(booking);
+            ticket.setShowtime(showtime);
+            ticket.setSeat(seat);
+            ticket.setOriginalPrice(price);
+            ticket.setDiscountAmount(BigDecimal.ZERO);
+            ticket.setFinalPrice(price);
+            tickets.add(ticket);
+            total = total.add(price);
         }
-//        bookingEntity.setTotalPrice(totalPrice);
-//        bookingEntity.setTickets(tickets);
-//        bookingRepository.save(bookingEntity);
-//        ticketRepository.saveAll(tickets);
-        return bookingEntity.getId();
+        booking.setTickets(tickets);
+        booking.setTotalPrice(total);
+        return bookingRepository.saveAndFlush(booking).getId();
     }
 
     @Override
+    @Transactional
     public void delete(Long id) {
-        UserEntity userEntity = userRepository.findById(id).orElseThrow(()->new RuntimeException("Không tìm thấy user id="+id));
-        userRepository.deleteById(userEntity.getId());
+        BookingEntity booking = bookingRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy booking id=" + id));
+        showtimeRepository.findByIdForUpdate(booking.getShowtime().getId())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy showtime"));
+        // Reload after obtaining the same lock used by booking creation and cleanup.
+        entityManager.refresh(booking);
+        if (booking.getStatus() == BookingStatus.CANCELLED) {
+            return;
+        }
+        if (booking.getStatus() != BookingStatus.PENDING) {
+            throw new IllegalStateException("Chỉ có thể hủy booking đang chờ thanh toán");
+        }
+        cancelPendingBooking(booking);
     }
 
-    @Override
-    public String holdBooking(BookingRequest bookingRequest) {
-        for(Long seatId : bookingRequest.getSeatIds()){
-            SeatEntity seatEntity = seatRepository.findById(seatId)
-                    .orElseThrow(() -> new RuntimeException("Không tìm thấy ghế id="+seatId));
-            if(ticketRepository.existsByShowtimeIdAndSeatIdAndBooking_StatusIn(bookingRequest.getShowtimeId(), seatId, new BookingStatus[]{BookingStatus.PAID})){
-                throw new RuntimeException("Ghế "+seatEntity.getRowIndex()+""+seatEntity.getColumnIndex()+" đã có người đặt");
+    private void cancelPendingBooking(BookingEntity booking) {
+        List<Long> seatIds = booking.getTickets().stream().map(ticket -> ticket.getSeat().getId()).toList();
+        for (TicketEntity ticket : booking.getTickets()) {
+            SeatStatusEntity status = seatStatusRepository.findBySeatIdAndShowtimeId(
+                    ticket.getSeat().getId(), booking.getShowtime().getId());
+            if (status != null && status.getStatus() == SeatStatus.HELD) {
+                status.setStatus(SeatStatus.AVAILABLE);
+                status.setHoldExpiresAt(null);
+                seatStatusRepository.save(status);
             }
         }
-        bookingRequest.setCreatedAt(LocalDateTime.now());
-        boolean holdSuccess = redisService.holdSeats(bookingRequest.getShowtimeId(), bookingRequest.getSeatIds(), bookingRequest.getUserId(),15);
-        if(!holdSuccess){
-            throw new RuntimeException("Ghế đang được người khác thanh toán!");
+        booking.setStatus(BookingStatus.CANCELLED);
+        bookingRepository.saveAndFlush(booking);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    redisService.releaseSeats(booking.getShowtime().getId(), seatIds, booking.getUser().getId());
+                }
+            });
         }
-        String tmpBookingId = redisService.saveTempBooking(bookingRequest,15);
-        return tmpBookingId;
     }
 
-//    @Override
-//    public BookingResponse getBookingResponse(Long bookingId) {
-//        BookingResponse bookingResponseDTO = new BookingResponse();
-//        BookingEntity bookingEntity = bookingRepository.findById(bookingId)
-//                .orElseThrow(() -> new RuntimeException());
-//                bookingResponseDTO.setId(bookingEntity.getId());
-//        bookingResponseDTO.setStatus(bookingEntity.getStatus());
-//        bookingResponseDTO.setTotalPrice(bookingEntity.getTotalPrice());
-//        bookingResponseDTO.setCreatedAt(bookingEntity.getCreatedAt());
-//        bookingResponseDTO.setExpirationTime(bookingEntity.getCreatedAt().plusMinutes(5));
-//        ShowtimeEntity showtimeEntity = bookingEntity.getShowtime();
-//
-//        MovieBookingDTO movieBookingDTO = movieConverter.toMovieBookingDTO(showtimeEntity.getMovie());
-//        bookingResponseDTO.setMovieBookingDTO(movieBookingDTO);
-//
-//        bookingResponseDTO.setCinemaName(showtimeEntity.getRoom().getCinema().getName());
-//        bookingResponseDTO.setRoomName(showtimeEntity.getRoom().getName());
-//        bookingResponseDTO.setStartTime(showtimeEntity.getStartTime());
-//        List<SeatEntity> seatEntities = bookingEntity.getTickets().stream().map(ticket -> ticket.getSeat()).toList();
-//        List<ShowtimeSeatDTO> seatDTOS = seatEntities.stream().map(seat -> seatConverter.toSeatDTO(seat,showtimeEntity.getId())).toList();
-//        bookingResponseDTO.setSelectedSeats(seatDTOS);
-//
-//        return bookingResponseDTO;
-//    }
+    @Override
+    @Transactional
+    public String holdBooking(BookingRequest request, Long userId) {
+        validateRequest(request);
+        if (userId == null || userId <= 0) {
+            throw new IllegalArgumentException("Thông tin user không hợp lệ");
+        }
+        ShowtimeEntity showtime = getShowtime(request.getShowtimeId());
+        if (!userRepository.existsById(userId)) {
+            throw new IllegalArgumentException("Không tìm thấy user");
+        }
+        validateSeats(request, showtime);
+        request.setCreatedAt(LocalDateTime.now());
+        if (!redisService.holdSeats(showtime.getId(), request.getSeatIds(), userId, HOLD_MINUTES)) {
+            throw new IllegalStateException("Ghế đang được người khác thanh toán!");
+        }
+        try {
+            return redisService.saveTempBooking(request, userId, HOLD_MINUTES);
+        } catch (RuntimeException exception) {
+            redisService.releaseSeats(showtime.getId(), request.getSeatIds(), userId);
+            throw exception;
+        }
+    }
+
+    private UserEntity getUserByUsername(String username) {
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("Không tìm thấy user");
+        }
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy user"));
+    }
+
+    private void validateRequest(BookingRequest request) {
+        if (request == null || request.getShowtimeId() == null || request.getShowtimeId() <= 0
+                || request.getSeatIds() == null || request.getSeatIds().isEmpty()
+                || request.getSeatIds().stream().anyMatch(id -> id == null || id <= 0)
+                || request.getSeatIds().stream().distinct().count() != request.getSeatIds().size()) {
+            throw new IllegalArgumentException("Thông tin đặt vé không hợp lệ hoặc danh sách ghế bị trùng");
+        }
+    }
+
+    private ShowtimeEntity getShowtime(Long id) {
+        ShowtimeEntity showtime = showtimeRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy showtime"));
+        if (showtime.getStartTime() == null || !showtime.getStartTime().isAfter(LocalDateTime.now())) {
+            throw new IllegalStateException("Suất chiếu đã bắt đầu hoặc hết hạn đặt vé");
+        }
+        return showtime;
+    }
+
+    private List<SeatEntity> validateSeats(BookingRequest request, ShowtimeEntity showtime) {
+        List<SeatEntity> seats = new ArrayList<>();
+        for (Long seatId : request.getSeatIds()) {
+            SeatEntity seat = seatRepository.findById(seatId)
+                    .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy ghế id=" + seatId));
+            if (!seat.getRoom().getId().equals(showtime.getRoom().getId())) {
+                throw new IllegalArgumentException("Ghế không thuộc phòng của suất chiếu");
+            }
+            if (ticketRepository.existsByShowtimeIdAndSeatIdAndBooking_StatusIn(showtime.getId(), seatId,
+                    new BookingStatus[]{BookingStatus.PENDING, BookingStatus.PAID})) {
+                throw new IllegalStateException("Ghế đã có người đặt");
+            }
+            SeatStatusEntity status = seatStatusRepository.findBySeatIdAndShowtimeId(seatId, showtime.getId());
+            if (status != null && (status.getStatus() == SeatStatus.BOOKED
+                    || (status.getStatus() == SeatStatus.HELD && (status.getHoldExpiresAt() == null
+                    || status.getHoldExpiresAt().isAfter(LocalDateTime.now()))))) {
+                throw new IllegalStateException("Ghế đang được đặt");
+            }
+            seats.add(seat);
+        }
+        return seats;
+    }
 
     @Override
-    public BookingResponse getTempBookingResponse(String uuid) {
-        BookingRequest bookingRequest = redisService.getTempBooking(uuid);
-        if(bookingRequest ==  null){
-            throw new RuntimeException("Phiên đặt vé đã hết hạn! Vui lòng đặt lại");
+    @Transactional(readOnly = true)
+    public BookingResponse getTempBookingResponse(String uuid, Long userId) {
+        TempBookingRequest tempBooking = redisService.getTempBooking(uuid);
+        if (tempBooking == null || userId == null || !userId.equals(tempBooking.getUserId())) {
+            throw new AccessDeniedException("Không có quyền truy cập phiên đặt vé này");
         }
-        BookingResponse bookingResponse = new BookingResponse();
-        bookingResponse.setId(uuid);
-        bookingResponse.setCreatedAt(LocalDateTime.now().plusMinutes(5));
-        ShowtimeEntity showtimeEntity = showtimeRepository.findById(bookingRequest.getShowtimeId())
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy showtime"));
-        bookingResponse.setCinemaName(showtimeEntity.getRoom().getCinema().getName());
-        bookingResponse.setRoomName(showtimeEntity.getRoom().getName());
-        bookingResponse.setStartTime(showtimeEntity.getStartTime());
-        List<SeatEntity> seatEntities = seatRepository.findAllById(bookingRequest.getSeatIds());
-        List<ShowtimeSeatDTO> showtimeSeatDTOS = seatEntities.stream().map(seat -> seatConverter.toSeatDTO(seat,showtimeEntity.getId())).toList();
-        bookingResponse.setSelectedSeats(showtimeSeatDTOS);
-
-        bookingResponse.setStatus(BookingStatus.PENDING);
-        BigDecimal basePrice = showtimeEntity.getBasePrice();
-        BigDecimal totalPrice = seatEntities.stream().map(seatEntity -> seatEntity.getSeatType().getSurcharge()
-                .add(basePrice)).reduce(BigDecimal.ZERO, BigDecimal::add);
-        bookingResponse.setTotalPrice(totalPrice);
-        bookingResponse.setCreatedAt(bookingRequest.getCreatedAt());
-        bookingResponse.setExpirationTime(bookingRequest.getCreatedAt().plusMinutes(15));
-
-        MovieBookingDTO movieBookingDTO = movieConverter.toMovieBookingDTO(showtimeEntity.getMovie());
-        bookingResponse.setMovieBookingDTO(movieBookingDTO);
-
-        return bookingResponse;
+        BookingRequest request = tempBooking.getBookingRequest();
+        if (request == null || request.getCreatedAt() == null
+                || !request.getCreatedAt().plusMinutes(HOLD_MINUTES).isAfter(LocalDateTime.now())) {
+            throw new IllegalStateException("Phiên đặt vé đã hết hạn! Vui lòng đặt lại");
+        }
+        ShowtimeEntity showtime = showtimeRepository.findById(request.getShowtimeId())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy showtime"));
+        List<SeatEntity> seats = seatRepository.findAllById(request.getSeatIds());
+        BookingResponse response = new BookingResponse();
+        response.setId(uuid);
+        response.setStatus(BookingStatus.PENDING);
+        response.setCreatedAt(request.getCreatedAt());
+        response.setExpirationTime(request.getCreatedAt().plusMinutes(HOLD_MINUTES));
+        response.setCinemaName(showtime.getRoom().getCinema().getName());
+        response.setRoomName(showtime.getRoom().getName());
+        response.setStartTime(showtime.getStartTime());
+        response.setMovieBookingDTO(movieConverter.toMovieBookingDTO(showtime.getMovie()));
+        response.setSelectedSeats(seats.stream().map(seat -> {
+            ShowtimeSeatDTO dto = seatConverter.toSeatDTO(seat, showtime.getId());
+            dto.setStatus(SeatStatus.HELD);
+            return dto;
+        }).toList());
+        response.setTotalPrice(seats.stream().map(seat -> showtime.getBasePrice()
+                .add(seat.getSeatType().getSurcharge())).reduce(BigDecimal.ZERO, BigDecimal::add));
+        return response;
     }
 
     @Override
@@ -273,4 +332,167 @@ public class BookingServiceImpl implements BookingService {
         return new PageImpl<>(content, pageable, total);
     }
 
+    @Override
+    @Transactional
+    public Long createPendingFromTemp(String tempBookingId, Long userId) {
+        if (tempBookingId == null || tempBookingId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu mã phiên đặt vé");
+        }
+
+        if (userId == null || userId <= 0) {
+            throw new AccessDeniedException("Không xác định được người đặt vé");
+        }
+
+        TempBookingRequest tempBooking = redisService.getTempBooking(tempBookingId);
+
+        if (tempBooking == null || tempBooking.getBookingRequest() == null) {
+            throw new IllegalStateException("Phiên đặt vé không tồn tại hoặc đã hết hạn");
+        }
+
+        if (!userId.equals(tempBooking.getUserId())) {
+            throw new AccessDeniedException("Bạn không có quyền thanh toán phiên đặt vé này");
+        }
+
+        BookingRequest request = tempBooking.getBookingRequest();
+        validateRequest(request);
+
+        if (request.getCreatedAt() == null) {
+            throw new IllegalStateException("Phiên đặt vé không có thời gian tạo");
+        }
+
+        LocalDateTime expiresAt = request.getCreatedAt().plusMinutes(HOLD_MINUTES);
+
+        if (!expiresAt.isAfter(LocalDateTime.now())) {
+            throw new IllegalStateException("Phiên đặt vé đã hết hạn");
+        }
+
+        // Khóa suất chiếu bằng findByIdForUpdate(), cùng cơ chế với tạo, hủy và cleanup booking.
+        ShowtimeEntity showtime = getShowtime(request.getShowtimeId());
+
+        // Kiểm tra lại vì có thể đã phải chờ khóa.
+        if (!expiresAt.isAfter(LocalDateTime.now())) {
+            throw new IllegalStateException("Phiên đặt vé đã hết hạn trong khi chờ xử lý");
+        }
+
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy user"));
+
+        if (!redisService.isOwnsSeats(showtime.getId(), request.getSeatIds(), userId)) {
+            throw new IllegalStateException("Bạn không còn giữ đủ các ghế của phiên đặt vé");
+        }
+
+        // Kiểm tra ghế đúng phòng, chưa thuộc booking PENDING/PAID và không bị giữ trong database.
+        List<SeatEntity> seats = validateSeats(request, showtime);
+
+        BookingEntity booking = new BookingEntity();
+        booking.setUser(user);
+        booking.setShowtime(showtime);
+        booking.setStatus(BookingStatus.PENDING);
+
+        // Giữ mốc cũ để cleanup không tự cộng thêm 15 phút.
+        booking.setCreatedAt(request.getCreatedAt());
+
+        List<TicketEntity> tickets = new ArrayList<>();
+        BigDecimal total = BigDecimal.ZERO;
+
+        for (SeatEntity seat : seats) {
+            SeatStatusEntity seatStatus = seatStatusRepository.findBySeatIdAndShowtimeId(seat.getId(), showtime.getId());
+
+            if (seatStatus == null) {
+                seatStatus = new SeatStatusEntity();
+                seatStatus.setSeat(seat);
+                seatStatus.setShowtime(showtime);
+            }
+
+            seatStatus.setStatus(SeatStatus.HELD);
+            seatStatus.setHoldExpiresAt(expiresAt);
+            seatStatusRepository.save(seatStatus);
+
+            BigDecimal price = showtime.getBasePrice().add(seat.getSeatType().getSurcharge());
+
+            TicketEntity ticket = new TicketEntity();
+            ticket.setBooking(booking);
+            ticket.setShowtime(showtime);
+            ticket.setSeat(seat);
+            ticket.setOriginalPrice(price);
+            ticket.setDiscountAmount(BigDecimal.ZERO);
+            ticket.setFinalPrice(price);
+
+            tickets.add(ticket);
+            total = total.add(price);
+        }
+
+        if (total.signum() <= 0) {
+            throw new IllegalStateException("Tổng tiền booking không hợp lệ");
+        }
+
+        booking.setTickets(tickets);
+        booking.setTotalPrice(total);
+
+        // Kiểm tra sát thời điểm lưu.
+        if (!expiresAt.isAfter(LocalDateTime.now())) {
+            throw new IllegalStateException("Phiên đặt vé đã hết hạn trong khi xử lý");
+        }
+
+        return bookingRepository.saveAndFlush(booking).getId();
+    }
+
+    @Override
+    @Transactional
+    public void processPaymentResult(String transactionCode, boolean isSuccess) {
+        PaymentEntity payment = paymentRepository.findByTransactionCode(transactionCode)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy giao dịch: " + transactionCode));
+
+        // Tránh xử lý lặp lại nếu giao dịch đã có kết quả (Idempotency)
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            return;
+        }
+
+        BookingEntity booking = payment.getBooking();
+        ShowtimeEntity showtime = showtimeRepository.findByIdForUpdate(booking.getShowtime().getId())
+                .orElseThrow(() -> new IllegalStateException("Không tìm thấy showtime"));
+        entityManager.refresh(booking);
+        entityManager.refresh(payment);
+
+        List<Long> seatIds = booking.getTickets().stream()
+                .map(t -> t.getSeat().getId())
+                .toList();
+
+        if (isSuccess) {
+            payment.setStatus(PaymentStatus.SUCCESS);
+            payment.setPaidAt(LocalDateTime.now());
+            booking.setStatus(BookingStatus.PAID);
+
+            // 3. Cập nhật trạng thái ghế trong database thành BOOKED
+            for (TicketEntity ticket : booking.getTickets()) {
+                SeatStatusEntity seatStatus = seatStatusRepository.findBySeatIdAndShowtimeId(
+                        ticket.getSeat().getId(), showtime.getId());
+                if (seatStatus == null) {
+                    seatStatus = new SeatStatusEntity();
+                    seatStatus.setSeat(ticket.getSeat());
+                    seatStatus.setShowtime(showtime);
+                }
+                seatStatus.setStatus(SeatStatus.BOOKED);
+                seatStatus.setHoldExpiresAt(null);
+                seatStatusRepository.save(seatStatus);
+            }
+
+            // 4. Nhả key giữ ghế trên Redis sau khi commit thành công
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        redisService.releaseSeats(showtime.getId(), seatIds, booking.getUser().getId());
+                    }
+                });
+            }
+        } else {
+            // Thanh toán thất bại: Chỉ đánh dấu Payment là FAILED
+            // KHÔNG hủy booking, KHÔNG nhả ghế để người dùng có thể thanh toán lại trong thời hạn giữ chỗ
+            payment.setStatus(PaymentStatus.FAILED);
+        }
+
+        paymentRepository.save(payment);
+        bookingRepository.saveAndFlush(booking);
+    }
 }

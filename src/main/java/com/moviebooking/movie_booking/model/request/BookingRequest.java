@@ -9,7 +9,6 @@ import java.util.List;
 @Getter
 @Setter
 public class BookingRequest {
-    private Long userId;
     private Long showtimeId;
     private List<Long> seatIds;
     private LocalDateTime createdAt;

@@ -18,6 +18,7 @@ public class VNPayConfig {
     public static final String vnp_HashSecret = "03NVVLU9CF68NBN3O7UOSRUKYYSL34M3";
     public static final String vnp_PayUrl = "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html";
     public static final String vnp_ReturnUrl = "http://localhost:8080/api/payment/vnpay/return";
+    public static final String vnp_ApiUrl = "https://sandbox.vnpayment.vn/merchant_webapi/api/transaction";
 
     // ====== RANDOM TXN REF ======
     public static String getRandomNumber(int len) {

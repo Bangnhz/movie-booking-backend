@@ -25,8 +25,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import static java.util.Arrays.stream;
-
 @Service
 public class CinemaServiceImpl implements CinemaService {
     @Autowired

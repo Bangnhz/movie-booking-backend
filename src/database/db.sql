@@ -144,12 +144,8 @@ CREATE TABLE tickets (
                          FOREIGN KEY (booking_id) REFERENCES bookings(id),
                          FOREIGN KEY (seat_id) REFERENCES seats(id),
                          FOREIGN KEY (showtime_id) REFERENCES showtimes(id)
---                          UNIQUE (seat_id, showtime_id)
 
 );
--- CREATE UNIQUE INDEX idx_active_seats
---     ON tickets(seat_id, showtime_id)
---     WHERE (status != 'CANCELLED');
 CREATE TABLE payments (
                           id INT AUTO_INCREMENT PRIMARY KEY,
                           booking_id INT NOT NULL,

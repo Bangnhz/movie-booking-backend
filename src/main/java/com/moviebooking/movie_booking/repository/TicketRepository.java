@@ -6,4 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface TicketRepository extends JpaRepository<TicketEntity, Long> {
     boolean existsByShowtimeIdAndSeatIdAndBooking_StatusIn(Long showtimeId, Long seatId, BookingStatus[] bookingStatus);
+    boolean existsByShowtimeIdAndSeatIdAndBooking_StatusInAndBooking_IdNot(Long showtimeId, Long seatId, BookingStatus[] bookingStatus, Long bookingId);
 }

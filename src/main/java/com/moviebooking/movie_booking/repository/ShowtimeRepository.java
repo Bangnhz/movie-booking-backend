@@ -8,8 +8,14 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 
 public interface ShowtimeRepository extends JpaRepository<ShowtimeEntity,Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM ShowtimeEntity s WHERE s.id = :id")
+    Optional<ShowtimeEntity> findByIdForUpdate(@Param("id") Long id);
 //    @Query("SELECT m FROM ShowtimeEntity s " +
 //            "JOIN FETCH s.movie m " +
 //            "WHERE s.room.cinema.id = :cinemaId " +

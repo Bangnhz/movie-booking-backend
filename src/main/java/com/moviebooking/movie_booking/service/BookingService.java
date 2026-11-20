@@ -10,10 +10,12 @@ import org.springframework.data.domain.Pageable;
 import java.util.List;
 
 public interface BookingService {
-    Long create(BookingRequest bookingRequest);
+    Long create(BookingRequest bookingRequest, String username);
     void delete(Long id);
-    String holdBooking(BookingRequest bookingRequest);
+    String holdBooking(BookingRequest bookingRequest, Long userId);
 //    BookingResponse getBookingResponse(Long bookingId);
-    BookingResponse getTempBookingResponse(String uuid);
+    BookingResponse getTempBookingResponse(String uuid, Long userId);
     Page<BookingSearchResponse> getBookingsByUserId(Long userId, BookingSearchRequest request, Pageable pageable);
+    Long createPendingFromTemp(String tempBookingId, Long userId);
+    void processPaymentResult(String transactionCode, boolean isSuccess);
 }
