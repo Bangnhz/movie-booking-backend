@@ -33,7 +33,7 @@ public class GenreController {
     @PutMapping
     public ResponseEntity<?> update(@RequestBody GenreDTO genreDTO) {
         try {
-            genreService.create(genreDTO);
+            genreService.update(genreDTO);
             return ResponseEntity.ok(genreDTO);
         }
         catch (Exception e) {

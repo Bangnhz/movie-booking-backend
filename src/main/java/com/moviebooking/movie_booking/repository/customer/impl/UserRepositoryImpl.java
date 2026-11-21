@@ -77,6 +77,9 @@ public class UserRepositoryImpl implements UserRepositoryCustomer {
                 role.setName((String) row[6]);
 
                 user.getRoles().add(role);
+                if (user.getRole() == null) {
+                    user.setRole((String) row[6]);
+                }
             }
         }
 

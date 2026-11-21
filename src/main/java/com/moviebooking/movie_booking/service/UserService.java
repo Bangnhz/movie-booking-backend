@@ -13,7 +13,7 @@ import java.util.List;
 public interface UserService {
     public void register(RegisterRequest register);
     public void delete(Long id);
-    public void update(UserDTO userDTO);
+    public UserDTO update(UserDTO userDTO);
     public LoginResponse login(LoginRequest login);
     Page<UserDTO> findAll(UserSearchRequest userSearchRequest, Pageable pageable);
 }

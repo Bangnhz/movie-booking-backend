@@ -1,13 +1,10 @@
 package com.moviebooking.movie_booking.converter;
 
 import com.moviebooking.movie_booking.entity.GenreEntity;
+import com.moviebooking.movie_booking.entity.MovieEntity;
 import com.moviebooking.movie_booking.entity.MovieGenreEntity;
 import com.moviebooking.movie_booking.enums.AgeRating;
-import com.moviebooking.movie_booking.model.dto.GenreDTO;
-import com.moviebooking.movie_booking.model.dto.MovieBookingDTO;
-import com.moviebooking.movie_booking.model.dto.MovieCardDTO;
-import com.moviebooking.movie_booking.entity.MovieEntity;
-import com.moviebooking.movie_booking.model.dto.MovieDetailDTO;
+import com.moviebooking.movie_booking.model.dto.*;
 import com.moviebooking.movie_booking.model.request.save.MovieSaveRequest;
 import com.moviebooking.movie_booking.repository.GenreRepository;
 import org.modelmapper.ModelMapper;
@@ -28,6 +25,7 @@ public class MovieConverter {
         MovieCardDTO movieCardDTO = modelMapper.map(movieEntity, MovieCardDTO.class);
         return movieCardDTO;
     }
+
     public MovieDetailDTO toMovieDetailDTO(MovieEntity movieEntity) {
         if (movieEntity == null) return null;
         MovieDetailDTO movieDetailDTO = new MovieDetailDTO();
@@ -54,14 +52,24 @@ public class MovieConverter {
         movieDetailDTO.setGenres(genreDTOs);
         return movieDetailDTO;
     }
+
     public MovieBookingDTO toMovieBookingDTO(MovieEntity movieEntity) {
         MovieBookingDTO movieBookingDTO = modelMapper.map(movieEntity, MovieBookingDTO.class);
-
         AgeRating ageRating = movieEntity.getAgeRating();
         movieBookingDTO.setAgeRatingName(ageRating.name());
         movieBookingDTO.setAgeRatingColor(ageRating.getColor());
         return movieBookingDTO;
     }
+
+    public MovieScheduleDTO toMovieScheduleDTO(MovieEntity movieEntity) {
+        if (movieEntity == null) return null;
+        MovieScheduleDTO dto = modelMapper.map(movieEntity, MovieScheduleDTO.class);
+        if (movieEntity.getAgeRating() != null) {
+            dto.setAgeRating(movieEntity.getAgeRating().name());
+        }
+        return dto;
+    }
+
     public MovieEntity toMovieEntity(MovieSaveRequest request) {
         MovieEntity movieEntity = modelMapper.map(request, MovieEntity.class);
         List<MovieGenreEntity> movieGenreEntities = new ArrayList<>();

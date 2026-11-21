@@ -41,10 +41,21 @@ public class GenreServiceImpl implements GenreService {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public void update(GenreDTO genreDTO) {
+        if (genreDTO.getId() == null) {
+            throw new IllegalArgumentException("ID thể loại không được để trống!");
+        }
         GenreEntity oldGenre = genreRepository.findById(genreDTO.getId())
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy genre"));
-        oldGenre.setName(genreDTO.getName());
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy thể loại với id=" + genreDTO.getId()));
+
+        if (genreDTO.getName() != null && !genreDTO.getName().trim().isEmpty()) {
+            String cleanName = genreDTO.getName().trim();
+            if (genreRepository.existsByNameAndIdNot(cleanName, genreDTO.getId())) {
+                throw new RuntimeException("Đã tồn tại thể loại khác với tên: " + cleanName);
+            }
+            oldGenre.setName(cleanName);
+        }
         genreRepository.save(oldGenre);
     }
 }

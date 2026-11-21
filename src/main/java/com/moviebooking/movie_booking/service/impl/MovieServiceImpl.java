@@ -79,6 +79,7 @@ public class MovieServiceImpl implements MovieService {
 
         // 2. Cập nhật thông tin cơ bản của Movie
         modelMapper.map(request, movieEntity);
+        movieEntity.setId(id);
         movieRepository.save(movieEntity);
 
         // 3. XỬ LÝ THỦ CÔNG BẢNG TRUNG GIAN

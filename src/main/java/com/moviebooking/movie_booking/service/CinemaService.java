@@ -20,5 +20,5 @@ public interface CinemaService {
     CinemaDetailDTO getCinemaById(Long cinemaId);
     Page<CinemaSearchResponse> findAll(CinemaSearchRequest request, Pageable pageable);
     void add(CinemaSaveRequest request);
-    void update(CinemaSaveRequest request);
+    void update(CinemaSaveRequest request, Long id);
 }

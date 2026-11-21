@@ -24,8 +24,24 @@ public class MyUserDetailsService implements UserDetailsService {
         UserEntity user = userRepository.findByUsername(username).orElseThrow(() -> new UsernameNotFoundException("Username not found"));
 
         List<SimpleGrantedAuthority> authorities = user.getUserRoles().stream()
-                .map(userRole -> userRole.getRole().getName())
-                .map(SimpleGrantedAuthority::new)
+                .flatMap(userRole -> {
+                    String roleName = userRole.getRole() != null ? userRole.getRole().getName() : null;
+                    if (roleName == null || roleName.isBlank()) {
+                        return java.util.stream.Stream.empty();
+                    }
+                    String upper = roleName.trim().toUpperCase();
+                    if (upper.startsWith("ROLE_")) {
+                        return java.util.stream.Stream.of(
+                                new SimpleGrantedAuthority(upper),
+                                new SimpleGrantedAuthority(upper.substring(5))
+                        );
+                    } else {
+                        return java.util.stream.Stream.of(
+                                new SimpleGrantedAuthority(upper),
+                                new SimpleGrantedAuthority("ROLE_" + upper)
+                        );
+                    }
+                })
                 .toList();
 
         return org.springframework.security.core.userdetails.User.builder()

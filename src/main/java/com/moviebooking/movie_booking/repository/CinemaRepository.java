@@ -12,5 +12,7 @@ public interface CinemaRepository extends JpaRepository<CinemaEntity,Long>, Cine
     List<CinemaEntity> findByCityId(Long cityId);
     List<CinemaEntity> findByCityName(String cityName);
 
-    boolean findByName(String name);
+    Optional<CinemaEntity> findByName(String name);
+    boolean existsByName(String name);
+    boolean existsByNameAndIdNot(String name, Long id);
 }

@@ -10,10 +10,12 @@ import org.springframework.stereotype.Repository;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
 @Repository
 public class StatisticRepositoryImpl implements StatisticRepository {
     @PersistenceContext
     private EntityManager entityManager;
+
     @Override
     public List<Object[]> getStatistics(StatisticRequest request) {
 
@@ -23,6 +25,7 @@ public class StatisticRepositoryImpl implements StatisticRepository {
                 SELECT COUNT(DISTINCT m.id)
                 FROM movies m
                 JOIN showtimes st ON st.movie_id = m.id
+                JOIN rooms r ON r.id = st.room_id
                 WHERE 1 = 1
         """);
 
@@ -38,13 +41,25 @@ public class StatisticRepositoryImpl implements StatisticRepository {
             params.put("month", request.getMonth());
         }
 
+        if (request.getMovieId() != null) {
+            sql.append(" AND m.id = :movieId");
+            params.put("movieId", request.getMovieId());
+        }
+
+        if (request.getCinemaId() != null) {
+            sql.append(" AND r.cinema_id = :cinemaId");
+            params.put("cinemaId", request.getCinemaId());
+        }
+
         sql.append("""
             ) AS totalMovies,
 
             (
-                SELECT COUNT(*)
+                SELECT COUNT(t.id)
                 FROM tickets t
                 JOIN bookings b ON b.id = t.booking_id
+                JOIN showtimes st ON st.id = t.showtime_id
+                JOIN rooms r ON r.id = st.room_id
                 WHERE b.status = 'PAID'
         """);
 
@@ -54,14 +69,25 @@ public class StatisticRepositoryImpl implements StatisticRepository {
 
         if (request.getMonth() != null) {
             sql.append(" AND MONTH(b.created_at) = :month");
+        }
+
+        if (request.getMovieId() != null) {
+            sql.append(" AND st.movie_id = :movieId");
+        }
+
+        if (request.getCinemaId() != null) {
+            sql.append(" AND r.cinema_id = :cinemaId");
         }
 
         sql.append("""
             ) AS soldTickets,
 
             (
-                SELECT COALESCE(SUM(b.total_price),0)
-                FROM bookings b
+                SELECT COALESCE(SUM(t.final_price), 0)
+                FROM tickets t
+                JOIN bookings b ON b.id = t.booking_id
+                JOIN showtimes st ON st.id = t.showtime_id
+                JOIN rooms r ON r.id = st.room_id
                 WHERE b.status = 'PAID'
         """);
 
@@ -73,15 +99,24 @@ public class StatisticRepositoryImpl implements StatisticRepository {
             sql.append(" AND MONTH(b.created_at) = :month");
         }
 
+        if (request.getMovieId() != null) {
+            sql.append(" AND st.movie_id = :movieId");
+        }
+
+        if (request.getCinemaId() != null) {
+            sql.append(" AND r.cinema_id = :cinemaId");
+        }
+
         sql.append("""
             ) AS revenue,
 
             (
-                SELECT ROUND(
-                    (
-                        totalSeats - soldSeats
-                    ) * 100.0 / totalSeats,
-                    2
+                SELECT COALESCE(
+                    ROUND(
+                        (seatStatistic.totalSeats - seatStatistic.soldSeats) * 100.0 / NULLIF(seatStatistic.totalSeats, 0),
+                        2
+                    ),
+                    0.0
                 )
                 FROM
                 (
@@ -103,6 +138,14 @@ public class StatisticRepositoryImpl implements StatisticRepository {
             sql.append(" AND MONTH(st.start_time) = :month");
         }
 
+        if (request.getMovieId() != null) {
+            sql.append(" AND st.movie_id = :movieId");
+        }
+
+        if (request.getCinemaId() != null) {
+            sql.append(" AND r.cinema_id = :cinemaId");
+        }
+
         sql.append("""
                         ) AS totalSeats,
 
@@ -111,6 +154,7 @@ public class StatisticRepositoryImpl implements StatisticRepository {
                             FROM tickets t
                             JOIN bookings b ON b.id = t.booking_id
                             JOIN showtimes st ON st.id = t.showtime_id
+                            JOIN rooms r ON r.id = st.room_id
                             WHERE b.status = 'PAID'
         """);
 
@@ -120,6 +164,14 @@ public class StatisticRepositoryImpl implements StatisticRepository {
 
         if (request.getMonth() != null) {
             sql.append(" AND MONTH(st.start_time) = :month");
+        }
+
+        if (request.getMovieId() != null) {
+            sql.append(" AND st.movie_id = :movieId");
+        }
+
+        if (request.getCinemaId() != null) {
+            sql.append(" AND r.cinema_id = :cinemaId");
         }
 
         sql.append("""
@@ -133,64 +185,6 @@ public class StatisticRepositoryImpl implements StatisticRepository {
 
         return query.getResultList();
     }
-    /*
-    SELECT
-    (
-        SELECT COUNT(DISTINCT m.id)
-        FROM movies m
-        JOIN showtimes st ON st.movie_id = m.id
-        WHERE 1 = 1
-          AND YEAR(st.start_time) = :year
-          AND MONTH(st.start_time) = :month
-    ) AS totalMovies,
-
-    (
-        SELECT COUNT(*)
-        FROM tickets t
-        JOIN bookings b ON b.id = t.booking_id
-        WHERE b.status = 'PAID'
-          AND YEAR(b.created_at) = :year
-          AND MONTH(b.created_at) = :month
-    ) AS soldTickets,
-
-    (
-        SELECT COALESCE(SUM(b.total_price), 0)
-        FROM bookings b
-        WHERE b.status = 'PAID'
-          AND YEAR(b.created_at) = :year
-          AND MONTH(b.created_at) = :month
-    ) AS revenue,
-
-    (
-        SELECT ROUND(
-            (seatStatistic.totalSeats - seatStatistic.soldSeats)
-            * 100.0 / seatStatistic.totalSeats,
-            2
-        )
-        FROM (
-            SELECT
-                (
-                    SELECT COUNT(*)
-                    FROM showtimes st
-                    JOIN rooms r ON st.room_id = r.id
-                    JOIN seats s ON s.room_id = r.id
-                    WHERE YEAR(st.start_time) = :year
-                      AND MONTH(st.start_time) = :month
-                ) AS totalSeats,
-
-                (
-                    SELECT COUNT(*)
-                    FROM tickets t
-                    JOIN bookings b ON b.id = t.booking_id
-                    JOIN showtimes st ON st.id = t.showtime_id
-                    WHERE b.status = 'PAID'
-                      AND YEAR(st.start_time) = :year
-                      AND MONTH(st.start_time) = :month
-                ) AS soldSeats
-        ) AS seatStatistic
-    ) AS averageEmptySeatRate;
-
-     */
 
     @Override
     public List<Object[]> getChartData(StatisticRequest request) {
@@ -238,5 +232,4 @@ public class StatisticRepositoryImpl implements StatisticRepository {
 
         return query.getResultList();
     }
-
 }

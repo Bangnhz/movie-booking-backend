@@ -3,6 +3,7 @@ package com.moviebooking.movie_booking.service.impl;
 import com.moviebooking.movie_booking.converter.CinemaConverter;
 import com.moviebooking.movie_booking.converter.MovieConverter;
 import com.moviebooking.movie_booking.entity.CinemaEntity;
+import com.moviebooking.movie_booking.entity.CityEntity;
 import com.moviebooking.movie_booking.entity.MovieEntity;
 import com.moviebooking.movie_booking.entity.ShowtimeEntity;
 import com.moviebooking.movie_booking.model.dto.*;
@@ -10,6 +11,7 @@ import com.moviebooking.movie_booking.model.request.save.CinemaSaveRequest;
 import com.moviebooking.movie_booking.model.request.search.CinemaSearchRequest;
 import com.moviebooking.movie_booking.model.response.CinemaSearchResponse;
 import com.moviebooking.movie_booking.repository.CinemaRepository;
+import com.moviebooking.movie_booking.repository.CityRepository;
 import com.moviebooking.movie_booking.repository.ShowtimeRepository;
 import com.moviebooking.movie_booking.service.CinemaService;
 import org.modelmapper.ModelMapper;
@@ -31,6 +33,8 @@ public class CinemaServiceImpl implements CinemaService {
     private CinemaRepository cinemaRepository;
     @Autowired
     private ShowtimeRepository showtimeRepository;
+    @Autowired
+    private CityRepository cityRepository;
 
     @Autowired
     private ModelMapper modelMapper;
@@ -43,48 +47,46 @@ public class CinemaServiceImpl implements CinemaService {
     public CinemaScheduleDTO getCinemaSchedule(Long cinemaId, LocalDate date) {
         LocalDateTime start = LocalDateTime.now();
         CinemaEntity cinemaEntity = cinemaRepository.findById(cinemaId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy rạp này!"));
-        List<MovieEntity> movieEntities = showtimeRepository.findMoviesWithShowtimes(cinemaId,start);
-        List<MovieScheduleDTO> movieScheduleDTOs = movieEntities.stream()
-                .map(m -> {
-                    MovieScheduleDTO movieScheduleDTO = modelMapper.map(m, MovieScheduleDTO.class);
-                    List<ShowtimeSlotDTO> slots = m.getShowtimes().stream().map(s -> modelMapper.map(s, ShowtimeSlotDTO.class))
-                            .toList();
-                    movieScheduleDTO.setShowtimes(slots);
-                    return movieScheduleDTO;
-                }).toList();
+                .orElseThrow(() -> new RuntimeException("Cinema not found"));
 
-        CinemaScheduleDTO cinemaScheduleDTO = modelMapper.map(cinemaEntity, CinemaScheduleDTO.class);
-        cinemaScheduleDTO.setMovies(movieScheduleDTOs);
+        List<MovieEntity> movies = showtimeRepository.findMoviesWithShowtimes(cinemaId, start);
+        List<MovieScheduleDTO> movieDTOs = movies.stream()
+                .map(movieConverter::toMovieScheduleDTO)
+                .toList();
+        CinemaScheduleDTO cinemaScheduleDTO = new CinemaScheduleDTO();
+        cinemaScheduleDTO.setId(cinemaEntity.getId());
+        cinemaScheduleDTO.setName(cinemaEntity.getName());
+        cinemaScheduleDTO.setMovies(movieDTOs);
         return cinemaScheduleDTO;
     }
 
     @Override
     public List<CinemaListDTO> getByCityId(Long cityId) {
         List<CinemaEntity> cinemaEntities = cinemaRepository.findByCityId(cityId);
-        List<CinemaListDTO> cinemaListDTOs = cinemaEntities.stream().map(cinemaEntity -> {
-            return modelMapper.map(cinemaEntity, CinemaListDTO.class);
-        }).toList();
-        return cinemaListDTOs;
+        return cinemaEntities.stream()
+                .map(cinemaEntity -> modelMapper.map(cinemaEntity, CinemaListDTO.class))
+                .toList();
     }
 
     @Override
-    public CinemaDetailDTO getCinemaById(Long cinemaId) {
-        CinemaEntity cinemaEntity = cinemaRepository.findById(cinemaId).orElseThrow(() -> new RuntimeException("Không tìm thấy rạp có id="+cinemaId));;
+    public CinemaDetailDTO getCinemaById(Long id) {
+        CinemaEntity cinemaEntity = cinemaRepository.findById(id).orElseThrow(
+                () -> new RuntimeException("Không tìm thấy cinema với id=" + id)
+        );
         return cinemaConverter.toCinemaDetailDTO(cinemaEntity);
     }
 
     @Override
     public Page<CinemaSearchResponse> findAll(CinemaSearchRequest request, Pageable pageable) {
-        List<Object[]> results = cinemaRepository.findAll(request, pageable);
-        List<CinemaSearchResponse> responses = results.stream().map(row -> {
+        List<Object[]> rows = cinemaRepository.findAll(request, pageable);
+        List<CinemaSearchResponse> responses = rows.stream().map(row -> {
             CinemaSearchResponse res = new CinemaSearchResponse();
-            res.setId(((Number) row[0]).longValue());
-            res.setName((String) row[1]);
-            res.setAddress((String) row[2]);
-            res.setEmail((String) row[3]);
-            res.setCity((String) row[4]);
-            res.setNumberOfRoom(row[5].toString());
+            if (row[0] != null) res.setId(((Number) row[0]).longValue());
+            if (row[1] != null) res.setName((String) row[1]);
+            if (row[2] != null) res.setAddress((String) row[2]);
+            if (row[3] != null) res.setEmail((String) row[3]);
+            if (row[4] != null) res.setCity((String) row[4]);
+            res.setNumberOfRoom(row[5] != null ? String.valueOf(row[5]) : "0");
             return res;
         }).toList();
         Long total = cinemaRepository.countTotal(request);
@@ -94,13 +96,29 @@ public class CinemaServiceImpl implements CinemaService {
     @Override
     @Transactional
     public void add(CinemaSaveRequest request) {
-
-        if (cinemaRepository.findByName(request.getName())) {
+        if (request.getName() == null || request.getName().trim().isEmpty()) {
+            throw new RuntimeException("Tên rạp không được để trống!");
+        }
+        String cinemaName = request.getName().trim();
+        if (cinemaRepository.existsByName(cinemaName)) {
             throw new RuntimeException("Tên rạp phim đã tồn tại!");
         }
 
         try {
             CinemaEntity cinemaEntity = cinemaConverter.toCinemaEntity(request);
+            cinemaEntity.setName(cinemaName);
+            Long cityId = null;
+            if (request.getCity() != null && request.getCity().getId() != null) {
+                cityId = request.getCity().getId();
+            } else if (request.getCityId() != null) {
+                cityId = request.getCityId();
+            }
+            if (cityId != null) {
+                Long finalCityId = cityId;
+                CityEntity city = cityRepository.findById(finalCityId)
+                        .orElseThrow(() -> new RuntimeException("Không tìm thấy thành phố với id=" + finalCityId));
+                cinemaEntity.setCity(city);
+            }
             cinemaRepository.save(cinemaEntity);
         } catch (DataAccessException e) {
             throw new RuntimeException("Lỗi khi lưu rạp phim vào database", e);
@@ -109,17 +127,44 @@ public class CinemaServiceImpl implements CinemaService {
 
     @Override
     @Transactional
-    public void update(CinemaSaveRequest request) {
-        if (cinemaRepository.findByName(request.getName())) {
-            throw new RuntimeException("Tên rạp phim đã tồn tại!");
+    public void update(CinemaSaveRequest request, Long id) {
+        if (id == null) {
+            throw new IllegalArgumentException("ID rạp phim không được để trống!");
+        }
+        CinemaEntity existingCinema = cinemaRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy rạp phim với id=" + id));
+
+        if (request.getName() != null && !request.getName().trim().isEmpty()) {
+            String cinemaName = request.getName().trim();
+            if (cinemaRepository.existsByNameAndIdNot(cinemaName, id)) {
+                throw new RuntimeException("Tên rạp phim đã tồn tại!");
+            }
+            existingCinema.setName(cinemaName);
+        }
+        if (request.getAddress() != null) {
+            existingCinema.setAddress(request.getAddress().trim());
+        }
+        if (request.getEmail() != null) {
+            existingCinema.setEmail(request.getEmail().trim());
+        }
+
+        Long cityId = null;
+        if (request.getCity() != null && request.getCity().getId() != null) {
+            cityId = request.getCity().getId();
+        } else if (request.getCityId() != null) {
+            cityId = request.getCityId();
+        }
+        if (cityId != null) {
+            Long finalCityId = cityId;
+            CityEntity city = cityRepository.findById(finalCityId)
+                    .orElseThrow(() -> new RuntimeException("Không tìm thấy thành phố với id=" + finalCityId));
+            existingCinema.setCity(city);
         }
 
         try {
-            CinemaEntity cinemaEntity = cinemaConverter.toCinemaEntity(request);
-            cinemaRepository.save(cinemaEntity);
+            cinemaRepository.save(existingCinema);
         } catch (DataAccessException e) {
             throw new RuntimeException("Lỗi khi cập nhật rạp phim vào database", e);
         }
     }
-
 }

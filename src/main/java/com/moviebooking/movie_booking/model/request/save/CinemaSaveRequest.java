@@ -11,4 +11,5 @@ public class CinemaSaveRequest {
     private String address;
     private String email;
     private CityDTO city;
+    private Long cityId;
 }

@@ -15,5 +15,6 @@ public class UserDTO {
     private String email;
     private String phone;
     private Integer points;
+    private String role;
     private List<RoleDTO> roles;
 }

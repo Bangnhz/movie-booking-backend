@@ -94,7 +94,7 @@ public class CinemaController {
             @RequestBody CinemaSaveRequest request
     ){
         try {
-            cinemaService.update(request);
+            cinemaService.update(request, id);
             return ResponseEntity.ok(Map.of("message", "Cập nhật thành công"));
         }
         catch (Exception e){

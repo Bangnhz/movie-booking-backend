@@ -10,7 +10,6 @@ import java.util.List;
 @Getter
 @Setter
 public class MovieSaveRequest {
-    private String id;
     private String title;
     private String description;
     private String posterUrl;

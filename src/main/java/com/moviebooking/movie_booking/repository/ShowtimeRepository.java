@@ -13,6 +13,8 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.Lock;
 
 public interface ShowtimeRepository extends JpaRepository<ShowtimeEntity,Long> {
+    boolean existsByRoomId(Long roomId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM ShowtimeEntity s WHERE s.id = :id")
     Optional<ShowtimeEntity> findByIdForUpdate(@Param("id") Long id);
