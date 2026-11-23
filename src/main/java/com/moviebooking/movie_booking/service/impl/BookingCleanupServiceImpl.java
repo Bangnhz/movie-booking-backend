@@ -109,6 +109,34 @@ public class BookingCleanupServiceImpl implements BookingCleanupService {
                     // Vẫn trong khoảng thời gian đệm (từ phút 15 đến phút 20): TIẾP TỤC GIỮ GHẾ, chờ IPN hoặc lần quét sau
                     log.info("Giao dịch {} của booking {} vẫn đang chờ xử lý trên VNPay. Tiếp tục giữ ghế chờ xác nhận...",
                             pendingPayment.getTransactionCode(), booking.getId());
+
+                    // Cập nhật holdExpiresAt và gia hạn giữ chỗ trên Redis đến hết thời gian đệm (20 phút)
+                    // để giao diện hiển thị đúng trạng thái HELD và không cho người khác chọn nhầm
+                    LocalDateTime maxHoldExpiresAt = booking.getCreatedAt().plusMinutes(20);
+                    if (booking.getTickets() != null) {
+                        for (TicketEntity ticket : booking.getTickets()) {
+                            if (ticket.getSeat() != null && booking.getShowtime() != null) {
+                                SeatStatusEntity seatStatus = seatStatusRepository.findBySeatIdAndShowtimeId(
+                                        ticket.getSeat().getId(), booking.getShowtime().getId());
+                                if (seatStatus != null && seatStatus.getStatus() == SeatStatus.HELD) {
+                                    seatStatus.setHoldExpiresAt(maxHoldExpiresAt);
+                                    seatStatusRepository.save(seatStatus);
+                                }
+                            }
+                        }
+                        List<Long> seatIds = booking.getTickets().stream()
+                                .filter(t -> t.getSeat() != null)
+                                .map(t -> t.getSeat().getId())
+                                .toList();
+                        Long bookingUserId = booking.getUser() != null ? booking.getUser().getId() : null;
+                        if (bookingUserId != null && !seatIds.isEmpty() && booking.getShowtime() != null && redisService != null) {
+                            long remainingSeconds = java.time.Duration.between(LocalDateTime.now(), maxHoldExpiresAt).toSeconds();
+                            if (remainingSeconds > 0) {
+                                int remainingMinutes = (int) Math.ceil(remainingSeconds / 60.0);
+                                redisService.reserveSeats(booking.getShowtime().getId(), seatIds, bookingUserId, remainingMinutes);
+                            }
+                        }
+                    }
                 } else {
                     // Đã quá 20 phút mà vẫn không có xác nhận thành công -> Hết thời gian ân hạn, buộc phải hủy và nhả ghế
                     log.warn("Giao dịch {} của booking {} đã quá 20 phút mà không có xác nhận thành công. Hủy giao dịch, hủy booking và nhả ghế.",

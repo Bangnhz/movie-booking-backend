@@ -231,14 +231,23 @@ public class BookingServiceImpl implements BookingService {
                 throw new IllegalArgumentException("Ghế không thuộc phòng của suất chiếu");
             }
             if (ticketRepository.existsByShowtimeIdAndSeatIdAndBooking_StatusIn(showtime.getId(), seatId,
-                    new BookingStatus[] { BookingStatus.PENDING, BookingStatus.PAID })) {
+                    new BookingStatus[] { BookingStatus.PAID })) {
                 throw new IllegalStateException("Ghế đã có người đặt");
             }
             SeatStatusEntity status = seatStatusRepository.findBySeatIdAndShowtimeId(seatId, showtime.getId());
-            if (status != null && (status.getStatus() == SeatStatus.BOOKED
-                    || (status.getStatus() == SeatStatus.HELD && (status.getHoldExpiresAt() == null
-                            || status.getHoldExpiresAt().isAfter(LocalDateTime.now()))))) {
-                throw new IllegalStateException("Ghế đang được đặt");
+            if (status != null) {
+                if (status.getStatus() == SeatStatus.BOOKED) {
+                    throw new IllegalStateException("Ghế đang được đặt");
+                }
+                if (status.getStatus() == SeatStatus.HELD && (status.getHoldExpiresAt() == null
+                        || status.getHoldExpiresAt().isAfter(LocalDateTime.now()))) {
+                    throw new IllegalStateException("Ghế đang được đặt");
+                }
+            } else {
+                if (ticketRepository.existsByShowtimeIdAndSeatIdAndBooking_StatusIn(showtime.getId(), seatId,
+                        new BookingStatus[] { BookingStatus.PENDING })) {
+                    throw new IllegalStateException("Ghế đang được đặt");
+                }
             }
             seats.add(seat);
         }

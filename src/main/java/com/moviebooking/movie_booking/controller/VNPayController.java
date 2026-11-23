@@ -3,11 +3,15 @@ package com.moviebooking.movie_booking.controller;
 import com.moviebooking.movie_booking.config.VNPayConfig;
 import com.moviebooking.movie_booking.entity.BookingEntity;
 import com.moviebooking.movie_booking.entity.PaymentEntity;
+import com.moviebooking.movie_booking.entity.SeatStatusEntity;
+import com.moviebooking.movie_booking.entity.TicketEntity;
 import com.moviebooking.movie_booking.enums.BookingStatus;
 import com.moviebooking.movie_booking.enums.PaymentStatus;
+import com.moviebooking.movie_booking.enums.SeatStatus;
 import com.moviebooking.movie_booking.model.TempBookingRequest;
 import com.moviebooking.movie_booking.repository.BookingRepository;
 import com.moviebooking.movie_booking.repository.PaymentRepository;
+import com.moviebooking.movie_booking.repository.SeatStatusRepository;
 import com.moviebooking.movie_booking.repository.UserRepository;
 import com.moviebooking.movie_booking.service.BookingService;
 import com.moviebooking.movie_booking.service.RedisService;
@@ -47,6 +51,8 @@ public class VNPayController {
     private PaymentRepository paymentRepository;
     @Autowired
     private BookingRepository bookingRepository;
+    @Autowired(required = false)
+    private SeatStatusRepository seatStatusRepository;
 
     @PostMapping("/create")
     @ResponseBody
@@ -122,6 +128,34 @@ public class VNPayController {
 
             // Lưu mapping txnRef -> tempBookingId lên Redis để hỗ trợ lấy lại phiên khi thất bại
             redisService.saveTxnTempMapping(vnp_TxnRef, tempBookingId, 15);
+        }
+
+        // Gia hạn giữ chỗ lên 20 phút (15 phút đặt + 5 phút đệm IPN/QueryDR) cho đơn hàng bước vào thanh toán
+        if (bookingEntity.getTickets() != null && !bookingEntity.getTickets().isEmpty()) {
+            LocalDateTime maxHoldExpiresAt = bookingEntity.getCreatedAt().plusMinutes(20);
+            if (seatStatusRepository != null) {
+                for (TicketEntity ticket : bookingEntity.getTickets()) {
+                    if (ticket.getSeat() != null && bookingEntity.getShowtime() != null) {
+                        SeatStatusEntity seatStatus = seatStatusRepository.findBySeatIdAndShowtimeId(
+                                ticket.getSeat().getId(), bookingEntity.getShowtime().getId());
+                        if (seatStatus != null && seatStatus.getStatus() == SeatStatus.HELD) {
+                            seatStatus.setHoldExpiresAt(maxHoldExpiresAt);
+                            seatStatusRepository.save(seatStatus);
+                        }
+                    }
+                }
+            }
+            List<Long> seatIds = bookingEntity.getTickets().stream()
+                    .filter(t -> t.getSeat() != null)
+                    .map(t -> t.getSeat().getId())
+                    .toList();
+            if (!seatIds.isEmpty() && bookingEntity.getShowtime() != null && redisService != null) {
+                long remainingSeconds = java.time.Duration.between(LocalDateTime.now(), maxHoldExpiresAt).toSeconds();
+                if (remainingSeconds > 0) {
+                    int remainingMinutes = (int) Math.ceil(remainingSeconds / 60.0);
+                    redisService.reserveSeats(bookingEntity.getShowtime().getId(), seatIds, userId, remainingMinutes);
+                }
+            }
         }
 
         Map vnp_Params = new HashMap<>();

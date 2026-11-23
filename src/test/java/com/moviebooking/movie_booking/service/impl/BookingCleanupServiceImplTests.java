@@ -88,6 +88,10 @@ class BookingCleanupServiceImplTests {
         pendingPayment.setStatus(PaymentStatus.PENDING);
         pendingPayment.setCreatedAt(LocalDateTime.now().minusMinutes(5));
 
+        SeatStatusEntity status = new SeatStatusEntity();
+        status.setStatus(SeatStatus.HELD);
+        when(seatStatusRepository.findBySeatIdAndShowtimeId(3L, 2L)).thenReturn(status);
+
         when(paymentRepository.findTopByBooking_IdAndStatusOrderByCreatedAtDesc(10L, PaymentStatus.PENDING))
                 .thenReturn(Optional.of(pendingPayment));
         when(vnPayService.queryTransaction(eq("TXN-12345"), any()))
@@ -97,7 +101,9 @@ class BookingCleanupServiceImplTests {
 
         // Ghế KHÔNG bị hủy, booking vẫn là PENDING
         assertEquals(BookingStatus.PENDING, booking.getStatus());
-        verifyNoInteractions(seatStatusRepository);
+        // holdExpiresAt được gia hạn đến phút 20 (còn hiệu lực trong tương lai)
+        verify(seatStatusRepository).save(argThat(s ->
+                s.getHoldExpiresAt() != null && s.getHoldExpiresAt().isAfter(LocalDateTime.now())));
         verify(bookingRepository, never()).save(any());
         verify(bookingService, never()).processPaymentResult(anyString(), anyBoolean());
     }
