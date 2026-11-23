@@ -2,6 +2,7 @@ package com.moviebooking.movie_booking.service.impl;
 
 import com.moviebooking.movie_booking.entity.*;
 import com.moviebooking.movie_booking.enums.BookingStatus;
+import com.moviebooking.movie_booking.enums.PaymentStatus;
 import com.moviebooking.movie_booking.enums.SeatStatus;
 import com.moviebooking.movie_booking.model.TempBookingRequest;
 import com.moviebooking.movie_booking.model.request.BookingRequest;
@@ -35,6 +36,7 @@ class BookingServiceImplTests {
     @Mock private SeatRepository seatRepository;
     @Mock private TicketRepository ticketRepository;
     @Mock private SeatStatusRepository seatStatusRepository;
+    @Mock private PaymentRepository paymentRepository;
     @Mock private RedisService redisService;
     @Mock private EntityManager entityManager;
     @InjectMocks private BookingServiceImpl service;
@@ -218,5 +220,113 @@ class BookingServiceImplTests {
         } finally {
             TransactionSynchronizationManager.clearSynchronization();
         }
+    }
+
+    @Test
+    void cancelsTemporaryBookingAndReleasesSeats() {
+        TempBookingRequest tempBooking = new TempBookingRequest();
+        tempBooking.setUserId(1L);
+        tempBooking.setTempBookingId("temp-booking-id");
+        tempBooking.setBookingRequest(request);
+        when(redisService.getTempBooking("temp-booking-id")).thenReturn(tempBooking);
+
+        service.cancelTempBooking("temp-booking-id", 1L);
+
+        verify(redisService).releaseSeats(2L, List.of(3L), 1L);
+        verify(redisService).deleteTempBooking("temp-booking-id");
+    }
+
+    @Test
+    void rejectsCancellingTemporaryBookingOwnedByAnotherUser() {
+        TempBookingRequest tempBooking = new TempBookingRequest();
+        tempBooking.setUserId(2L);
+        tempBooking.setTempBookingId("temp-booking-id");
+        when(redisService.getTempBooking("temp-booking-id")).thenReturn(tempBooking);
+
+        assertThrows(AccessDeniedException.class, () -> service.cancelTempBooking("temp-booking-id", 1L));
+        verify(redisService, never()).releaseSeats(anyLong(), anyList(), anyLong());
+        verify(redisService, never()).deleteTempBooking(anyString());
+    }
+
+    @Test
+    void cancelsTemporaryBookingWithLinkedDatabaseBooking() {
+        TempBookingRequest tempBooking = new TempBookingRequest();
+        tempBooking.setUserId(1L);
+        tempBooking.setTempBookingId("temp-booking-id");
+        tempBooking.setBookingRequest(request);
+        tempBooking.setBookingId(10L);
+        when(redisService.getTempBooking("temp-booking-id")).thenReturn(tempBooking);
+
+        BookingEntity booking = new BookingEntity();
+        booking.setId(10L);
+        booking.setUser(user);
+        booking.setShowtime(showtime);
+        booking.setStatus(BookingStatus.PENDING);
+        TicketEntity ticket = new TicketEntity();
+        ticket.setSeat(seat);
+        booking.setTickets(new java.util.ArrayList<>(List.of(ticket)));
+        when(bookingRepository.findById(10L)).thenReturn(Optional.of(booking));
+        when(showtimeRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(showtime));
+
+        service.cancelTempBooking("temp-booking-id", 1L);
+
+        verify(redisService).releaseSeats(2L, List.of(3L), 1L);
+        verify(redisService).deleteTempBooking("temp-booking-id");
+        assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+    }
+
+    @Test
+    void deleteMarksPendingPaymentsAsFailed() {
+        BookingEntity booking = new BookingEntity();
+        booking.setId(10L);
+        booking.setUser(user);
+        booking.setShowtime(showtime);
+        booking.setStatus(BookingStatus.PENDING);
+        TicketEntity ticket = new TicketEntity();
+        ticket.setSeat(seat);
+        booking.setTickets(new java.util.ArrayList<>(List.of(ticket)));
+        when(bookingRepository.findById(10L)).thenReturn(Optional.of(booking));
+        when(showtimeRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(showtime));
+
+        PaymentEntity pendingPayment = new PaymentEntity();
+        pendingPayment.setId(99L);
+        pendingPayment.setStatus(PaymentStatus.PENDING);
+        when(paymentRepository.findAllByBooking_IdAndStatus(10L, PaymentStatus.PENDING))
+                .thenReturn(List.of(pendingPayment));
+
+        service.delete(10L);
+
+        assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+        assertEquals(PaymentStatus.FAILED, pendingPayment.getStatus());
+        verify(paymentRepository).save(pendingPayment);
+    }
+
+    @Test
+    void processPaymentResultDoesNotResurrectCancelledBooking() {
+        BookingEntity booking = new BookingEntity();
+        booking.setId(10L);
+        booking.setShowtime(showtime);
+        booking.setStatus(BookingStatus.CANCELLED);
+
+        PaymentEntity payment = new PaymentEntity();
+        payment.setId(88L);
+        payment.setTransactionCode("TXN-123");
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setBooking(booking);
+
+        when(paymentRepository.findByTransactionCode("TXN-123")).thenReturn(Optional.of(payment));
+        when(showtimeRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(showtime));
+
+        service.processPaymentResult("TXN-123", true);
+
+        // Booking phải giữ nguyên CANCELLED, KHÔNG được chuyển thành PAID
+        assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+        // Payment được ghi nhận SUCCESS với thời gian thanh toán
+        assertEquals(PaymentStatus.SUCCESS, payment.getStatus());
+        assertNotNull(payment.getPaidAt());
+        verify(paymentRepository).save(payment);
+        // Tuyệt đối không lưu booking lại thành PAID hay cập nhật trạng thái ghế
+        verify(bookingRepository, never()).saveAndFlush(argThat(b -> b.getStatus() == BookingStatus.PAID));
+        verify(seatStatusRepository, never()).save(any());
     }
 }

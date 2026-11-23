@@ -17,4 +17,7 @@ public interface RedisService {
     void saveTxnTempMapping(String txnRef, String tempBookingId, int minutes);
     String getTempBookingIdByTxnRef(String txnRef);
     boolean isOwnsSeats(Long showtimeId, List<Long> seatIds, Long userId);
+    boolean isSeatHeld(Long showtimeId, Long seatId);
+    java.util.Set<Long> getHeldSeatIds(Long showtimeId, List<Long> seatIds);
+    void deleteTempBooking(String bookingId);
 }

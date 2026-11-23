@@ -14,6 +14,8 @@ import com.moviebooking.movie_booking.model.response.BookingSearchResponse;
 import com.moviebooking.movie_booking.repository.*;
 import com.moviebooking.movie_booking.service.BookingService;
 import com.moviebooking.movie_booking.service.RedisService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -36,6 +38,8 @@ import java.util.Map;
 
 @Service
 public class BookingServiceImpl implements BookingService {
+    private static final Logger log = LoggerFactory.getLogger(BookingServiceImpl.class);
+
     @Autowired
     private BookingRepository bookingRepository;
     @Autowired
@@ -148,6 +152,16 @@ public class BookingServiceImpl implements BookingService {
         }
         booking.setStatus(BookingStatus.CANCELLED);
         bookingRepository.saveAndFlush(booking);
+
+        // Hủy toàn bộ giao dịch thanh toán PENDING của booking này để ngăn IPN success
+        // muộn chuyển booking thành PAID
+        List<PaymentEntity> pendingPayments = paymentRepository.findAllByBooking_IdAndStatus(
+                booking.getId(), PaymentStatus.PENDING);
+        for (PaymentEntity payment : pendingPayments) {
+            payment.setStatus(PaymentStatus.FAILED);
+            paymentRepository.save(payment);
+        }
+
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
@@ -217,13 +231,13 @@ public class BookingServiceImpl implements BookingService {
                 throw new IllegalArgumentException("Ghế không thuộc phòng của suất chiếu");
             }
             if (ticketRepository.existsByShowtimeIdAndSeatIdAndBooking_StatusIn(showtime.getId(), seatId,
-                    new BookingStatus[]{BookingStatus.PENDING, BookingStatus.PAID})) {
+                    new BookingStatus[] { BookingStatus.PENDING, BookingStatus.PAID })) {
                 throw new IllegalStateException("Ghế đã có người đặt");
             }
             SeatStatusEntity status = seatStatusRepository.findBySeatIdAndShowtimeId(seatId, showtime.getId());
             if (status != null && (status.getStatus() == SeatStatus.BOOKED
                     || (status.getStatus() == SeatStatus.HELD && (status.getHoldExpiresAt() == null
-                    || status.getHoldExpiresAt().isAfter(LocalDateTime.now()))))) {
+                            || status.getHoldExpiresAt().isAfter(LocalDateTime.now()))))) {
                 throw new IllegalStateException("Ghế đang được đặt");
             }
             seats.add(seat);
@@ -266,7 +280,8 @@ public class BookingServiceImpl implements BookingService {
     }
 
     @Override
-    public Page<BookingSearchResponse> getBookingsByUserId(Long userId, BookingSearchRequest request, Pageable pageable) {
+    public Page<BookingSearchResponse> getBookingsByUserId(Long userId, BookingSearchRequest request,
+            Pageable pageable) {
         List<Object[]> results = bookingRepository.findByUserId(userId, request, pageable);
 
         // Dùng LinkedHashMap giữ nguyên thứ tự tin cậy từ SQL
@@ -366,7 +381,8 @@ public class BookingServiceImpl implements BookingService {
             throw new IllegalStateException("Phiên đặt vé đã hết hạn");
         }
 
-        // Khóa suất chiếu bằng findByIdForUpdate(), cùng cơ chế với tạo, hủy và cleanup booking.
+        // Khóa suất chiếu bằng findByIdForUpdate(), cùng cơ chế với tạo, hủy và cleanup
+        // booking.
         ShowtimeEntity showtime = getShowtime(request.getShowtimeId());
 
         // Kiểm tra lại vì có thể đã phải chờ khóa.
@@ -381,7 +397,8 @@ public class BookingServiceImpl implements BookingService {
             throw new IllegalStateException("Bạn không còn giữ đủ các ghế của phiên đặt vé");
         }
 
-        // Kiểm tra ghế đúng phòng, chưa thuộc booking PENDING/PAID và không bị giữ trong database.
+        // Kiểm tra ghế đúng phòng, chưa thuộc booking PENDING/PAID và không bị giữ
+        // trong database.
         List<SeatEntity> seats = validateSeats(request, showtime);
 
         BookingEntity booking = new BookingEntity();
@@ -396,7 +413,8 @@ public class BookingServiceImpl implements BookingService {
         BigDecimal total = BigDecimal.ZERO;
 
         for (SeatEntity seat : seats) {
-            SeatStatusEntity seatStatus = seatStatusRepository.findBySeatIdAndShowtimeId(seat.getId(), showtime.getId());
+            SeatStatusEntity seatStatus = seatStatusRepository.findBySeatIdAndShowtimeId(seat.getId(),
+                    showtime.getId());
 
             if (seatStatus == null) {
                 seatStatus = new SeatStatusEntity();
@@ -454,6 +472,23 @@ public class BookingServiceImpl implements BookingService {
         entityManager.refresh(booking);
         entityManager.refresh(payment);
 
+        // Kiểm tra nếu booking không còn ở trạng thái PENDING (ví dụ: đã bị hủy bởi
+        // người dùng hoặc hệ thống)
+        if (booking.getStatus() != BookingStatus.PENDING) {
+            log.warn(
+                    "Giao dịch {} cho booking {} không ở trạng thái PENDING (trạng thái hiện tại: {}). Không kích hoạt vé.",
+                    transactionCode, booking.getId(), booking.getStatus());
+            if (isSuccess) {
+                payment.setStatus(PaymentStatus.SUCCESS);
+                payment.setPaidAt(LocalDateTime.now());
+                paymentRepository.save(payment);
+            } else {
+                payment.setStatus(PaymentStatus.FAILED);
+                paymentRepository.save(payment);
+            }
+            return;
+        }
+
         List<Long> seatIds = booking.getTickets().stream()
                 .map(t -> t.getSeat().getId())
                 .toList();
@@ -488,11 +523,39 @@ public class BookingServiceImpl implements BookingService {
             }
         } else {
             // Thanh toán thất bại: Chỉ đánh dấu Payment là FAILED
-            // KHÔNG hủy booking, KHÔNG nhả ghế để người dùng có thể thanh toán lại trong thời hạn giữ chỗ
+            // KHÔNG hủy booking, KHÔNG nhả ghế để người dùng có thể thanh toán lại trong
+            // thời hạn giữ chỗ
             payment.setStatus(PaymentStatus.FAILED);
         }
 
         paymentRepository.save(payment);
         bookingRepository.saveAndFlush(booking);
+    }
+
+    @Override
+    @Transactional
+    public void cancelTempBooking(String tempBookingId, Long userId) {
+        if (tempBookingId == null || tempBookingId.isBlank()) {
+            throw new IllegalArgumentException("Mã phiên đặt vé không hợp lệ");
+        }
+        TempBookingRequest tempBooking = redisService.getTempBooking(tempBookingId);
+        if (tempBooking == null) {
+            return;
+        }
+        if (userId == null || !userId.equals(tempBooking.getUserId())) {
+            throw new AccessDeniedException("Bạn không có quyền hủy phiên đặt vé này");
+        }
+        BookingRequest request = tempBooking.getBookingRequest();
+        if (request != null && request.getShowtimeId() != null && request.getSeatIds() != null) {
+            redisService.releaseSeats(request.getShowtimeId(), request.getSeatIds(), userId);
+        }
+        if (tempBooking.getBookingId() != null) {
+            try {
+                delete(tempBooking.getBookingId());
+            } catch (Exception e) {
+                // Booking trong DB có thể đã bị hủy hoặc không tồn tại
+            }
+        }
+        redisService.deleteTempBooking(tempBookingId);
     }
 }

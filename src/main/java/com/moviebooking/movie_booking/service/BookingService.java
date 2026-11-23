@@ -18,4 +18,5 @@ public interface BookingService {
     Page<BookingSearchResponse> getBookingsByUserId(Long userId, BookingSearchRequest request, Pageable pageable);
     Long createPendingFromTemp(String tempBookingId, Long userId);
     void processPaymentResult(String transactionCode, boolean isSuccess);
+    void cancelTempBooking(String tempBookingId, Long userId);
 }

@@ -133,6 +133,14 @@ public class BookingCleanupServiceImpl implements BookingCleanupService {
         booking.setStatus(BookingStatus.CANCELLED);
         bookingRepository.save(booking);
 
+        // Hủy bất kỳ payment PENDING nào còn lại của booking
+        List<PaymentEntity> pendingPayments = paymentRepository.findAllByBooking_IdAndStatus(
+                booking.getId(), PaymentStatus.PENDING);
+        for (PaymentEntity payment : pendingPayments) {
+            payment.setStatus(PaymentStatus.FAILED);
+            paymentRepository.save(payment);
+        }
+
         // Nhả khóa ghế trên Redis nếu còn lưu
         List<Long> seatIds = booking.getTickets().stream()
                 .map(t -> t.getSeat().getId())

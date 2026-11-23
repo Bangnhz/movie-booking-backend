@@ -8,7 +8,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,7 +24,7 @@ public class RedisServiceImpl implements RedisService {
 
     @Override
     public boolean holdSeats(Long showtimeId, List<Long> seatIds, Long userId, int minutes) {
-        return acquireSeats(showtimeId, seatIds, userId, minutes, false);
+        return acquireSeats(showtimeId, seatIds, userId, minutes, true);
     }
 
     @Override
@@ -101,6 +104,13 @@ public class RedisServiceImpl implements RedisService {
             return json == null ? null : objectMapper.readValue(json, TempBookingRequest.class);
         } catch (Exception e) {
             throw new RuntimeException("Không thể đọc phiên đặt vé tạm từ Redis", e);
+        }
+    }
+
+    @Override
+    public void deleteTempBooking(String bookingId) {
+        if (bookingId != null && !bookingId.isBlank()) {
+            stringRedisTemplate.delete("temp_booking:" + bookingId);
         }
     }
 
@@ -191,5 +201,33 @@ public class RedisServiceImpl implements RedisService {
                 seatKeys(showtimeId, seatIds), userId.toString());
 
         return Long.valueOf(1).equals(result);
+    }
+
+    @Override
+    public boolean isSeatHeld(Long showtimeId, Long seatId) {
+        if (showtimeId == null || seatId == null) {
+            return false;
+        }
+        String key = String.format("seat_hold:showtime:%d:seat:%d", showtimeId, seatId);
+        return Boolean.TRUE.equals(stringRedisTemplate.hasKey(key));
+    }
+
+    @Override
+    public Set<Long> getHeldSeatIds(Long showtimeId, List<Long> seatIds) {
+        if (showtimeId == null || seatIds == null || seatIds.isEmpty()) {
+            return Collections.emptySet();
+        }
+        List<String> keys = seatKeys(showtimeId, seatIds);
+        List<String> values = stringRedisTemplate.opsForValue().multiGet(keys);
+        if (values == null) {
+            return Collections.emptySet();
+        }
+        Set<Long> heldSeatIds = new HashSet<>();
+        for (int i = 0; i < seatIds.size(); i++) {
+            if (values.get(i) != null) {
+                heldSeatIds.add(seatIds.get(i));
+            }
+        }
+        return heldSeatIds;
     }
 }

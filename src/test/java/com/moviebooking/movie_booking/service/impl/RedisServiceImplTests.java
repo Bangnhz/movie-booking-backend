@@ -30,7 +30,7 @@ class RedisServiceImplTests {
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(service, "objectMapper", objectMapper);
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
     @Test
@@ -66,5 +66,12 @@ class RedisServiceImplTests {
         TempBookingRequest updated = objectMapper.readValue(json.getValue(), TempBookingRequest.class);
         assertEquals(bookingId, updated.getTempBookingId());
         assertEquals("vnp-txn-ref", updated.getPaymentId());
+    }
+
+    @Test
+    void deletesTempBookingFromRedis() {
+        String bookingId = "temp-booking-id";
+        service.deleteTempBooking(bookingId);
+        verify(redisTemplate).delete("temp_booking:" + bookingId);
     }
 }
